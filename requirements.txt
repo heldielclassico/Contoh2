@@ -1,9 +1,7 @@
 dspy-ai
 ultralytics
-opencv-python-headless  # Ganti opencv-python dengan ini
+opencv-python-headless
 openai
 requests
-pandas
+pillow
 numpy
-tqdm
-scikit-learn
