@@ -5,25 +5,36 @@ import cv2
 import numpy as np
 from PIL import Image
 import os
+import requests
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="YOLOv11 + DSPy Optimizer", layout="wide")
-st.title("🤖 Automated Prompt Optimization for YOLOv11")
-st.markdown("Studi Komparatif Klasifikasi Zero-Shot menggunakan DSPy & OpenRouter")
+st.set_page_config(page_title="YOLOv11 + DSPy Study", layout="wide")
+st.title("🔬 Automated Prompt Optimization: YOLOv11 & DSPy")
+st.subheader("Comparative Study: Zero-Shot Classification")
 
-# --- HANDLING API KEY ---
+# --- 1. HANDLING API KEY & CONNECTION TEST ---
 api_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
 
+def verify_openrouter(key):
+    try:
+        response = requests.get(
+            "https://openrouter.ai/api/v1/auth/key",
+            headers={"Authorization": f"Bearer {key}"}
+        )
+        return response.status_code == 200
+    except:
+        return False
+
 if not api_key:
-    st.error("API Key tidak ditemukan! Tambahkan OPENROUTER_API_KEY di Secrets Streamlit.")
+    st.error("🔑 API Key tidak ditemukan di Streamlit Secrets!")
     st.stop()
 
-# --- DEFINISI MODUL DSPy ---
+# --- 2. MODUL DSPY (THREAD-SAFE) ---
 class VisualDescription(dspy.Signature):
-    """Optimasi label untuk deteksi objek zero-shot."""
-    object_name = dspy.InputField(desc="Nama objek dasar")
-    context = dspy.InputField(desc="Konteks lingkungan atau atribut gambar")
-    refined_label = dspy.OutputField(desc="Deskripsi singkat, padat, dan spesifik secara visual")
+    """Mengubah label objek menjadi deskripsi visual spesifik untuk model vision."""
+    object_name = dspy.InputField(desc="Nama objek dasar (misal: 'Helm')")
+    context = dspy.InputField(desc="Lingkungan atau kondisi gambar")
+    refined_label = dspy.OutputField(desc="Deskripsi singkat, visual, dan spesifik")
 
 class PromptOptimizer(dspy.Module):
     def __init__(self):
@@ -31,76 +42,50 @@ class PromptOptimizer(dspy.Module):
         self.generator = dspy.ChainOfThought(VisualDescription)
 
     def forward(self, object_name, context):
-        # Inisialisasi LM di dalam forward untuk menghindari ThreadError di Streamlit
+        # Konfigurasi model di dalam forward untuk keamanan thread Streamlit
         lm = dspy.LM(
-            model="openai/google/gemini-2.5-flash-001", 
+            model="google/gemini-2.0-flash-001", # Tanpa prefix openai/ jika menggunakan api_base
             api_key=api_key,
             api_base="https://openrouter.ai/api/v1",
-            cache=False
+            cache=False,
+            extra_headers={
+                "HTTP-Referer": "http://localhost:8501",
+                "X-Title": "DSPy-YOLO-Study"
+            }
         )
         with dspy.context(lm=lm):
             return self.generator(object_name=object_name, context=context)
 
-# --- FUNGSI YOLO ---
+# --- 3. FUNGSI DETEKSI YOLOv11 ---
 @st.cache_resource
-def load_yolo_model():
-    # Menggunakan model World untuk dukungan Open Vocabulary (Zero-Shot)
+def load_yolo():
+    # Mengunduh model YOLOv11-World (mendukung Open Vocabulary)
     return YOLO("yolo11n-world.pt")
 
-def process_detection(image, labels):
-    model = load_yolo_model()
-    # Update vocabulary model secara dinamis
+def run_detection(image, labels):
+    model = load_yolo()
     model.set_classes(labels)
-    results = model.predict(image, conf=0.25)
+    results = model.predict(image, conf=0.25, verbose=False)
     return results[0]
 
-# --- ANTARMUKA PENGGUNA (UI) ---
-col1, col2 = st.columns([1, 1])
+# --- 4. ANTARMUKA PENGGUNA (UI) ---
+with st.sidebar:
+    st.header("⚙️ Pengaturan")
+    target_class = st.text_input("Objek Target:", "Safety Vest")
+    env_context = st.text_input("Konteks Gambar:", "Construction worker in low light")
+    st.divider()
+    if st.button("Uji Koneksi OpenRouter"):
+        if verify_openrouter(api_key): st.success("Koneksi Berhasil!")
+        else: st.error("Koneksi Gagal / User Not Found")
 
-with col1:
-    st.header("Input & Konfigurasi")
-    uploaded_file = st.file_uploader("Pilih Gambar...", type=['jpg', 'jpeg', 'png'])
-    target_class = st.text_input("Objek Target (Label Dasar):", "Safety Helmet")
-    env_context = st.text_input("Konteks (Opsional):", "Worker in a construction site with sunlight")
-    
-    run_btn = st.button("Jalankan Optimasi & Deteksi")
+uploaded_file = st.file_uploader("Upload gambar untuk klasifikasi zero-shot", type=['jpg', 'png', 'jpeg'])
 
-if uploaded_file and run_btn:
-    # 1. Tahap DSPy (Optimasi Prompt)
-    with st.spinner("DSPy sedang merumuskan prompt terbaik via OpenRouter..."):
-        try:
-            optimizer = PromptOptimizer()
-            dspy_result = optimizer.forward(object_name=target_class, context=env_context)
-            optimized_label = dspy_result.refined_label
-            reasoning = dspy_result.rationale
-        except Exception as e:
-            st.error(f"Gagal menghubungi OpenRouter: {e}")
-            st.stop()
-
-    # 2. Tahap YOLOv11 (Inference)
+if uploaded_file and target_class:
+    # Persiapan Gambar
     img = Image.open(uploaded_file).convert("RGB")
     img_array = np.array(img)
 
-    with st.spinner("YOLOv11 sedang mendeteksi objek..."):
-        # Bandingkan label asli vs label optimasi (Studi Komparatif)
-        res_optimized = process_detection(img_array, [optimized_label])
-        
-        # Plot hasil
-        img_res = res_optimized.plot()
-        img_res_rgb = cv2.cvtColor(img_res, cv2.COLOR_BGR2RGB)
-
-    # 3. Menampilkan Hasil
-    with col2:
-        st.header("Hasil Deteksi")
-        st.image(img_res_rgb, caption=f"Hasil dengan Prompt: {optimized_label}", use_container_width=True)
-        
-        with st.expander("Lihat Detail Optimasi DSPy"):
-            st.write(f"**Reasoning (CoT):** {reasoning}")
-            st.write(f"**Final Prompt:** `{optimized_label}`")
-
-        # Metrik Sederhana
-        num_objects = len(res_optimized.boxes)
-        st.metric("Jumlah Objek Terdeteksi", num_objects)
-
-elif run_btn and not uploaded_file:
-    st.warning("Mohon unggah gambar terlebih dahulu.")
+    st.divider()
+    
+    # PROSES 1: Optimasi Prompt
+    with st
