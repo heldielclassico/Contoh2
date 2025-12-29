@@ -33,7 +33,7 @@ class PromptOptimizer(dspy.Module):
     def forward(self, object_name, context):
         # Inisialisasi LM di dalam forward agar thread-safe
         lm = dspy.LM(
-            model="google/gemini-2.0-flash-001", 
+            model="google/gemini-2.5-flash-001", 
             api_key=api_key,
             api_base="https://openrouter.ai/api/v1",
             cache=False,
