@@ -13,7 +13,7 @@ def get_llm_backend():
     
     # Inisialisasi dspy.LM dengan konfigurasi eksplisit
     return dspy.LM(
-        model="openrouter/google/gemini-2.0-flash-lite-001",
+        model="openrouter/google/gemini-2.5-flash-lite",
         api_key=api_key_secret,
         api_base="https://openrouter.ai/api/v1",
         cache=False,
