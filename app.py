@@ -51,7 +51,7 @@ def load_yolo():
 
 # --- 4. ANTARMUKA STREAMLIT ---
 st.set_page_config(layout="wide")
-st.title("🔬 Automated Prompt Optimization: DSPy & YOLOv11")
+st.title("🔬 YAutomated Prompt Optimization: DSPy & YOLOv11")
 
 with st.sidebar:
     st.header("Input Parameter")
@@ -100,5 +100,5 @@ if uploaded_file and st.button("Jalankan Optimasi & Deteksi"):
         st.write(f"Ditemukan: {len(res_opt.boxes)} objek")
 
     st.divider()
-    st.write("**Rationale (Penalaran AI):**")
+    st.write("**Rationale (Tes Penalaran AI):**")
     st.info(result.rationale)
