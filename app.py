@@ -6,81 +6,99 @@ from ultralytics import YOLO
 import numpy as np
 from PIL import Image
 
-# --- 1. INISIALISASI MODEL (Pola Anda) ---
-def get_dspy_lm():
+# --- 1. KONFIGURASI API & MODEL ---
+# Kita gunakan pola LangChain yang Anda berikan karena lebih stabil menangani OpenRouter
+def get_llm_backend():
     api_key_secret = st.secrets["OPENROUTER_API_KEY"]
     
-    # Kita gunakan dspy.LM dengan adapter OpenAI agar kompatibel dengan pola ChatOpenAI
+    # Inisialisasi dspy.LM dengan konfigurasi eksplisit
     return dspy.LM(
         model="openrouter/google/gemini-2.0-flash-lite-001",
         api_key=api_key_secret,
         api_base="https://openrouter.ai/api/v1",
         cache=False,
         extra_headers={
-            "HTTP-Referer": "http://localhost:8501",
+            "HTTP-Referer": "http://localhost:8501", # Diperlukan OpenRouter
             "X-Title": "DSPy-YOLO-Comparative-Study"
         }
     )
 
-# --- 2. SIGNATURE & MODULE DSPY ---
+# --- 2. DEFINISI RISET DSPY ---
 class VisualDescription(dspy.Signature):
     """
-    Instruction: Gunakan SYSTEM_PROMPT dari secrets untuk mengoptimalkan label.
+    Tugas: Ubah label objek menjadi deskripsi visual spesifik.
+    Gunakan konteks tambahan untuk memperkaya deskripsi agar YOLOv11 lebih akurat.
     """
-    object_name = dspy.InputField(desc="Nama objek")
-    context = dspy.InputField(desc="Konteks data dari Google Sheets/Input")
-    refined_label = dspy.OutputField(desc="Deskripsi visual untuk YOLOv11")
+    object_name = dspy.InputField(desc="Nama objek dasar")
+    context = dspy.InputField(desc="Data tambahan dari sistem/sheets")
+    refined_label = dspy.OutputField(desc="Deskripsi visual pendek untuk YOLO")
 
 class ZeroShotOptimizer(dspy.Module):
     def __init__(self):
         super().__init__()
+        # Menggunakan ChainOfThought agar ada penalaran (Rationale) untuk paper riset
         self.generator = dspy.ChainOfThought(VisualDescription)
 
     def forward(self, object_name, context):
-        # Menggunakan konteks LM yang dikonfigurasi secara dinamis
-        with dspy.context(lm=get_dspy_lm()):
+        # Memaksa penggunaan backend LM yang sudah kita buat
+        with dspy.context(lm=get_llm_backend()):
             return self.generator(object_name=object_name, context=context)
 
-# --- 3. LOGIKA UTAMA STREAMLIT ---
-st.title("🔬 Automated Prompt Optimization for YOLOv11")
-
-# Contoh fungsi ambil data seperti pola Anda
-def get_sheet_data():
-    return "Kondisi pencahayaan redup, objek berada di area konstruksi."
-
-# Load YOLOv11-World
+# --- 3. FUNGSI YOLO ---
 @st.cache_resource
 def load_yolo():
     return YOLO("yolo11n-world.pt")
 
-uploaded_file = st.file_uploader("Upload Image", type=['jpg', 'png'])
-user_input = st.text_input("Objek yang dicari:", "Safety Helmet")
+# --- 4. ANTARMUKA STREAMLIT ---
+st.set_page_config(layout="wide")
+st.title("🔬 Automated Prompt Optimization: DSPy & YOLOv11")
 
-if uploaded_file and st.button("Proses"):
-    # Gabungkan data Sheets + Input User
-    additional_data = get_sheet_data()
-    
-    # Tahap DSPy
-    with st.spinner("Mengoptimalkan prompt..."):
-        optimizer = ZeroShotOptimizer()
-        # DSPy akan otomatis menggabungkan instruksi Signature + Input
-        result = optimizer.forward(object_name=user_input, context=additional_data)
-        optimized_prompt = result.refined_label
+with st.sidebar:
+    st.header("Input Parameter")
+    user_input = st.text_input("Objek yang dicari:", "Safety Helmet")
+    # Contoh data tambahan seperti pola yang Anda inginkan
+    additional_data = st.text_area("Konteks (Data Sheets/System):", 
+                                   "Kondisi area gelap, subjek menggunakan APD lengkap.")
 
-    # Tahap YOLO
+uploaded_file = st.file_uploader("Upload Image", type=['jpg', 'jpeg', 'png'])
+
+if uploaded_file and st.button("Jalankan Optimasi & Deteksi"):
     img = Image.open(uploaded_file).convert("RGB")
-    model = load_yolo()
-    model.set_classes([optimized_prompt]) # Set label hasil optimasi
     
-    yolo_results = model.predict(np.array(img), conf=0.25)
-    
-    # Display Side by Side
+    # A. Tahap Optimasi Prompt (DSPy)
+    with st.spinner("DSPy sedang mengoptimalkan prompt..."):
+        try:
+            optimizer = ZeroShotOptimizer()
+            result = optimizer.forward(object_name=user_input, context=additional_data)
+            optimized_prompt = result.refined_label
+        except Exception as e:
+            st.error(f"Gagal menghubungi OpenRouter: {str(e)}")
+            st.stop()
+
+    # B. Tahap Deteksi (YOLOv11)
+    with st.spinner("YOLOv11 sedang mendeteksi..."):
+        model = load_yolo()
+        # Bandingkan performa
+        # 1. Deteksi dengan Prompt Asli
+        model.set_classes([user_input])
+        res_base = model.predict(np.array(img), conf=0.25, verbose=False)[0]
+        
+        # 2. Deteksi dengan Prompt DSPy
+        model.set_classes([optimized_prompt])
+        res_opt = model.predict(np.array(img), conf=0.25, verbose=False)[0]
+
+    # C. Tampilan Perbandingan (Comparative Study)
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Prompt Optimasi")
-        st.info(optimized_prompt)
-        st.write(f"Rationale: {result.rationale}")
-        
+        st.subheader("Metode A: Baseline")
+        st.image(res_base.plot()[:,:,::-1], caption=f"Prompt: {user_input}")
+        st.write(f"Ditemukan: {len(res_base.boxes)} objek")
+
     with col2:
-        st.subheader("Hasil Deteksi")
-        st.image(yolo_results[0].plot()[:,:,::-1])
+        st.subheader("Metode B: DSPy Optimized")
+        st.image(res_opt.plot()[:,:,::-1], caption=f"Prompt: {optimized_prompt}")
+        st.write(f"Ditemukan: {len(res_opt.boxes)} objek")
+
+    st.divider()
+    st.write("**Rationale (Penalaran AI):**")
+    st.info(result.rationale)
