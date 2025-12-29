@@ -1,68 +1,98 @@
+import streamlit as st
 import dspy
 from ultralytics import YOLO
+import cv2
+import numpy as np
+from PIL import Image
 import os
 
-# --- Konfigurasi OpenRouter via DSPy ---
-# Anda bisa mengganti model dengan 'anthropic/claude-3.5-sonnet' atau 'google/gemini-pro-1.5'
-openrouter_model = "openai/gpt-4o-mini" 
-api_key = "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"
+# --- 1. KONFIGURASI HALAMAN & API ---
+st.set_page_config(page_title="YOLOv11 + DSPy Optimizer", layout="wide")
+st.title("Automated Prompt Optimization for Zero-Shot YOLOv11")
 
-# Konfigurasi LLM menggunakan adapter OpenAI yang diarahkan ke OpenRouter
+# Ambil API Key dari Streamlit Secrets atau Environment Variable
+api_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+
+if not api_key:
+    st.error("API Key tidak ditemukan! Masukkan OPENROUTER_API_KEY di Streamlit Secrets.")
+    st.stop()
+
+# --- 2. KONFIGURASI DSPy ---
+# Menggunakan Gemini atau GPT-4o-mini via OpenRouter
 lm = dspy.LM(
-    f'openai/{openrouter_model}',
+    model="openai/google/gemini-2.0-flash-001", 
     api_key=api_key,
     api_base="https://openrouter.ai/api/v1",
-    extra_headers={
-        "HTTP-Referer": "http://localhost:3000", # Opsional untuk OpenRouter
-        "X-Title": "DSPy Zero-Shot Research"
-    }
+    cache=False
 )
 dspy.configure(lm=lm)
 
-# --- Definisi Arsitektur DSPy ---
-class ZeroShotSignature(dspy.Signature):
-    """Mengoptimalkan label tekstual agar lebih mudah dikenali oleh model Vision (YOLOv11)."""
-    base_label = dspy.InputField(desc="Nama objek (contoh: 'helm')")
-    environment = dspy.InputField(desc="Konteks gambar (contoh: 'proyek konstruksi, siang hari')")
-    refined_prompt = dspy.OutputField(desc="Deskripsi visual singkat yang sangat spesifik untuk deteksi")
+# Signature untuk optimasi prompt visual
+class VisualDescription(dspy.Signature):
+    """Meningkatkan akurasi klasifikasi dengan deskripsi visual mendetail."""
+    object_name = dspy.InputField(desc="Nama objek dasar")
+    context = dspy.InputField(desc="Konteks lingkungan gambar")
+    refined_label = dspy.OutputField(desc="Deskripsi singkat namun spesifik untuk model vision")
 
 class PromptOptimizer(dspy.Module):
     def __init__(self):
         super().__init__()
-        # Menggunakan ChainOfThought untuk penalaran sebelum menghasilkan prompt
-        self.optimizer = dspy.ChainOfThought(ZeroShotSignature)
+        self.generator = dspy.ChainOfThought(VisualDescription)
 
-    def forward(self, label, context):
-        return self.optimizer(base_label=label, environment=context)
+    def forward(self, object_name, context):
+        return self.generator(object_name=object_name, context=context)
 
-# --- Integrasi YOLOv11 ---
-def run_comparative_inference(image_path, labels):
-    # Menggunakan YOLO11 World (model Open Vocabulary)
-    model = YOLO("yolo11n-world.pt") 
-    
-    # Set label hasil optimasi ke model
+# --- 3. LOGIKA DETEKSI YOLOv11 ---
+@st.cache_resource
+def load_yolo():
+    # Menggunakan model World untuk Open Vocabulary
+    return YOLO("yolo11n-world.pt")
+
+def run_inference(image, labels):
+    model = load_yolo()
     model.set_classes(labels)
-    
-    # Jalankan prediksi
-    results = model.predict(image_path, save=True)
-    return results
+    results = model.predict(image)
+    return results[0]
 
-# --- Eksekusi Utama ---
-if __name__ == "__main__":
-    # 1. Inisialisasi Optimizer
-    dspy_module = PromptOptimizer()
-    
-    # 2. Kasus Uji: Objek yang sering sulit dideteksi secara general
-    target_object = "safety vest"
-    context_info = "high-visibility clothing in a busy warehouse with artificial lighting"
+# --- 4. ANTARMUKA PENGGUNA (UI) ---
+col1, col2 = st.columns([1, 1])
 
-    print(f"--- Mengoptimalkan Prompt via OpenRouter ({openrouter_model}) ---")
-    prediction = dspy_module.forward(label=target_object, context=context_info)
+with col1:
+    uploaded_file = st.file_uploader("Upload Gambar", type=['jpg', 'jpeg', 'png'])
+    target_class = st.text_input("Objek yang ingin dicari:", "Safety Helmet")
+    env_context = st.text_input("Konteks lingkungan:", "Construction site, bright daylight")
     
-    optimized_label = prediction.refined_prompt
-    print(f"Hasil Optimasi: {optimized_label}")
+    run_btn = st.button("Jalankan Optimasi & Deteksi")
 
-    # 3. Jalankan YOLOv11
-    # Kita bandingkan label dasar vs label hasil optimasi DSPy
-    final_labels = [optimized_label, "person", "forklift"]
-    run_comparative_inference("warehouse_scene.jpg", final_labels)
+if run_btn and uploaded_file:
+    # A. Tahap Optimasi Prompt dengan DSPy
+    with st.spinner("Mengoptimalkan prompt via OpenRouter..."):
+        optimizer = PromptOptimizer()
+        dspy_res = optimizer.forward(object_name=target_class, context=env_context)
+        optimized_text = dspy_res.refined_label
+        
+    st.info(f"**Prompt Asli:** {target_class}\n\n**Prompt Teroptimasi (DSPy):** {optimized_text}")
+
+    # B. Tahap Deteksi dengan YOLOv11
+    img = Image.open(uploaded_file)
+    img_array = np.array(img)
+    
+    with st.spinner("Menjalankan YOLOv11 Zero-Shot..."):
+        # Kita uji dengan prompt hasil optimasi
+        detection_results = run_inference(img_array, [optimized_text])
+        
+        # Plot hasil
+        res_plotted = detection_results.plot()
+        res_rgb = cv2.cvtColor(res_plotted, cv2.COLOR_BGR2RGB)
+
+    with col2:
+        st.image(res_rgb, caption="Hasil Deteksi Zero-Shot", use_container_width=True)
+        
+        # Tampilkan statistik deteksi
+        if len(detection_results.boxes) > 0:
+            st.success(f"Ditemukan {len(detection_results.boxes)} objek!")
+        else:
+            st.warning("Objek tidak terdeteksi. Coba sesuaikan konteks.")
+
+elif run_btn and not uploaded_file:
+    st.error("Silakan upload gambar terlebih dahulu.")
