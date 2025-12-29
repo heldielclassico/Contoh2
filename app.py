@@ -14,7 +14,7 @@ st.title("🔬 Automated Prompt Optimization: YOLOv11 & DSPy")
 api_key = st.secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
 
 if not api_key:
-    st.error("🔑 API Key tidak ditemukan! Masukkan di Streamlit Secrets.")
+    st.error("🔑 API Key tidak ditemukan!")
     st.stop()
 
 # --- 2. MODUL DSPY ---
@@ -30,16 +30,13 @@ class PromptOptimizer(dspy.Module):
         self.generator = dspy.ChainOfThought(VisualDescription)
 
     def forward(self, object_name, context):
-        # MENGGUNAKAN PREFIX openrouter/
+        # LiteLLM/OpenRouter Auth Fix
+        os.environ["OPENROUTER_API_KEY"] = api_key
+        
         lm = dspy.LM(
-            model="openrouter/google/gemini-2.0-flash-lite-001", 
+            model="openrouter/google/gemini-2.0-flash-001",
             api_key=api_key,
-            api_base="https://openrouter.ai/api/v1",
-            cache=False,
-            extra_headers={
-                "HTTP-Referer": "http://localhost:8501",
-                "X-Title": "DSPy-YOLO-Study"
-            }
+            cache=False
         )
         with dspy.context(lm=lm):
             return self.generator(object_name=object_name, context=context)
@@ -59,7 +56,7 @@ def run_detection(image, labels):
 with st.sidebar:
     st.header("Konfigurasi")
     target_class = st.text_input("Objek Target:", "Safety Helmet")
-    env_context = st.text_input("Konteks:", "Construction site, bright daylight")
+    env_context = st.text_input("Konteks:", "Construction site")
     run_btn = st.button("Jalankan Analisis")
 
 uploaded_file = st.file_uploader("Upload Gambar", type=['jpg', 'jpeg', 'png'])
@@ -68,29 +65,30 @@ if uploaded_file and run_btn:
     img = Image.open(uploaded_file).convert("RGB")
     img_array = np.array(img)
 
-    with st.spinner("DSPy sedang mengoptimalkan prompt via OpenRouter..."):
+    with st.spinner("Menghubungi OpenRouter..."):
         try:
             optimizer = PromptOptimizer()
             dspy_res = optimizer.forward(object_name=target_class, context=env_context)
             optimized_prompt = dspy_res.refined_label
             rationale = dspy_res.rationale
+            
+            # Tampilkan Hasil Komparasi
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Baseline")
+                res_base = run_detection(img_array, [target_class])
+                st.image(res_base.plot()[:, :, ::-1], use_container_width=True)
+            
+            with col2:
+                st.subheader("DSPy Optimized")
+                res_opt = run_detection(img_array, [optimized_prompt])
+                st.image(res_opt.plot()[:, :, ::-1], use_container_width=True)
+
+            st.divider()
+            with st.expander("Detail Analisis DSPy"):
+                st.write(f"**Rationale:** {rationale}")
+                st.write(f"**Final Prompt:** `{optimized_prompt}`")
+                
         except Exception as e:
-            st.error(f"Gagal mengoptimalkan prompt: {e}")
-            st.stop()
-
-    # Visualisasi
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Baseline")
-        res_base = run_detection(img_array, [target_class])
-        st.image(res_base.plot()[:, :, ::-1], caption=f"Prompt: {target_class}", use_container_width=True)
-    
-    with col2:
-        st.subheader("DSPy Optimized")
-        res_opt = run_detection(img_array, [optimized_prompt])
-        st.image(res_opt.plot()[:, :, ::-1], caption=f"Prompt: {optimized_prompt}", use_container_width=True)
-
-    st.divider()
-    with st.expander("Detail Analisis DSPy"):
-        st.write(f"**Rationale:** {rationale}")
-        st.write(f"**Final Prompt:** `{optimized_prompt}`")
+            st.error(f"⚠️ Kesalahan Autentikasi: {str(e)}")
+            st.info("Tips: Pastikan API Key di Secrets sudah benar dan akun OpenRouter Anda memiliki kredit.")
