@@ -32,7 +32,7 @@ class PromptOptimizer(dspy.Module):
     def forward(self, object_name, context):
         # MENGGUNAKAN PREFIX openrouter/
         lm = dspy.LM(
-            model="openrouter/google/gemini-2.5-flash-001", 
+            model="openrouter/google/gemini-2.0-flash-lite-001", 
             api_key=api_key,
             api_base="https://openrouter.ai/api/v1",
             cache=False,
