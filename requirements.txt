@@ -1,20 +1,9 @@
-# DSPy Framework untuk optimasi prompt
 dspy-ai
-
-# Computer Vision & YOLOv11
 ultralytics
-opencv-python
-
-# API & Integrasi (Untuk OpenRouter)
+opencv-python-headless  # Ganti opencv-python dengan ini
 openai
 requests
-
-# Data Manipulation & Evaluation (Penting untuk riset komparatif)
 pandas
 numpy
 tqdm
 scikit-learn
-
-# Visualisasi (Opsional tapi berguna untuk studi)
-matplotlib
-seaborn
