@@ -5,7 +5,7 @@ import os
 # --- Konfigurasi OpenRouter via DSPy ---
 # Anda bisa mengganti model dengan 'anthropic/claude-3.5-sonnet' atau 'google/gemini-pro-1.5'
 openrouter_model = "openai/gpt-4o-mini" 
-api_key = "YOUR_OPENROUTER_API_KEY"
+api_key = "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"
 
 # Konfigurasi LLM menggunakan adapter OpenAI yang diarahkan ke OpenRouter
 lm = dspy.LM(
